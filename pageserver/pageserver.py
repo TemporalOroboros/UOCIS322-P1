@@ -90,16 +90,45 @@ def respond(sock):
     log.info("Request was {}\n***\n".format(request))
 
     parts = request.split()
-    if len(parts) > 1 and parts[0] == "GET":
-        transmit(STATUS_OK, sock)
-        transmit(CAT, sock)
-    else:
+    if len(parts) <= 1 or parts[0] != "GET":
         log.info("Unhandled request: {}".format(request))
         transmit(STATUS_NOT_IMPLEMENTED, sock)
         transmit("\nI don't handle this request: {}\n".format(request), sock)
+        shut_socket(sock)
+        return
+    
+    request_path = parts[1]
+    if (".." in request_path) or ("//" in request_path) or ("~" in request_path):
+        log.info("Forbidden request {}\n".format(request))
+        transmit(STATUS_FORBIDDEN, sock)
+        # Handle error message
+        shut_socket(sock)
+        return
+    
+    if (not request_path.endswith(".html")) and (not request_path.endswith(".css")):
+        log.info("Forbidden file format {}\n".format(request))
+        transmit(STATUS_FORBIDDEN, sock)
+        # Handle error message
+        shut_socket(sock)
+        return
 
-    sock.shutdown(socket.SHUT_RDWR)
-    sock.close()
+    request_file = None
+    try:
+        request_file = open(request_path, "r")
+        if request_file is None:
+            raise FileNotFoundError
+    except:
+        log.info("Requested file did not exist: {request}\n".format(request))
+        transmit(STATUS_NOT_FOUND, sock)
+        # Handle error message
+        shut_socket(sock)
+        return
+
+    transmit(STATUS_OK, sock)
+    transmit(request_file.read(), sock)
+    request_file.close()
+
+    shut_socket(sock)
     return
 
 
@@ -109,6 +138,10 @@ def transmit(msg, sock):
     while sent < len(msg):
         buff = bytes(msg[sent:], encoding="utf-8")
         sent += sock.send(buff)
+
+def shut_socket(sock, mode = socket.SHUT_RDWR):
+    sock.shutdown(mode)
+    sock.close()
 
 ###
 #
