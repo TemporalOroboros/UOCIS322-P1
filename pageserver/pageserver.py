@@ -22,7 +22,9 @@ log = logging.getLogger(__name__)
 
 import socket    # Basic TCP/IP communication on the internet
 import _thread   # Response computation runs concurrently with main program
-
+import os        # Advanced file and filepath handling
+HERE = os.path.dirname(__file__)
+DOCROOT = HERE
 
 def listen(portnum):
     """
@@ -59,14 +61,11 @@ def serve(sock, func):
         _thread.start_new_thread(func, (clientsocket,))
 
 
-##
-# Starter version only serves cat pictures. In fact, only a
-# particular cat picture.  This one.
-##
-CAT = """
-     ^ ^
-   =(   )=
-"""
+## Globals:
+# Strings requested file paths cannot contain.
+FORBIDDEN_PATH_SEGMENTS = ["//", "~", ".."]
+# Strings file requested file paths are allowed to end with.
+ALLOWED_PATH_SUFFIXES = [".html", ".css"]
 
 # HTTP response codes, as the strings we will actually send.
 # See:  https://en.wikipedia.org/wiki/List_of_HTTP_status_codes
@@ -83,7 +82,7 @@ def respond(sock):
     This server responds only to GET requests (not PUT, POST, or UPDATE).
     Any valid GET request is answered with an ascii graphic of a cat.
     """
-    sent = 0
+
     request = sock.recv(1024)  # We accept only short requests
     request = str(request, encoding='utf-8', errors='strict')
     log.info("--- Received request ----")
@@ -98,36 +97,32 @@ def respond(sock):
         return
     
     request_path = parts[1]
-    if (".." in request_path) or ("//" in request_path) or ("~" in request_path):
-        log.info("Forbidden request {}\n".format(request))
+    if any((segment in request_path) for segment in FORBIDDEN_PATH_SEGMENTS):
+        log.info("Forbidden request: {}\n".format(request))
         transmit(STATUS_FORBIDDEN, sock)
-        # Handle error message
         shut_socket(sock)
         return
     
-    if (not request_path.endswith(".html")) and (not request_path.endswith(".css")):
-        log.info("Forbidden file format {}\n".format(request))
+    if not any(request_path.endswith(suffix) for suffix in ALLOWED_PATH_SUFFIXES):
+        log.info("Forbidden file format: {}\n".format(request))
         transmit(STATUS_FORBIDDEN, sock)
-        # Handle error message
         shut_socket(sock)
         return
 
-    request_file = None
-    try:
-        request_file = open(request_path, "r")
-        if request_file is None:
-            raise FileNotFoundError
-    except:
-        log.info("Requested file did not exist: {request}\n".format(request))
+    request_path = DOCROOT + request_path
+    if not os.path.exists(request_path):
+        log.info("Nonexisent request: {}".format(request))
         transmit(STATUS_NOT_FOUND, sock)
-        # Handle error message
         shut_socket(sock)
         return
 
-    transmit(STATUS_OK, sock)
-    transmit(request_file.read(), sock)
-    request_file.close()
+    response_text = None
+    with open(request_path) as request_file:
+        response_text = request_file.read()
 
+    log.info("Responding to valid request: {}".format(request))
+    transmit(STATUS_OK, sock)
+    transmit(response_text, sock)
     shut_socket(sock)
     return
 
@@ -173,10 +168,14 @@ def main():
     port = options.PORT
     if options.DEBUG:
         log.setLevel(logging.DEBUG)
-    sock = listen(port)
-    log.info("Listening on port {}".format(port))
-    log.info("Socket is {}".format(sock))
-    serve(sock, respond)
+    global DOCROOT
+    if options.DOCROOT:
+        DOCROOT = os.path.join(HERE, options.DOCROOT)
+
+    with listen(port) as sock:
+        log.info("Listening on port {}".format(port))
+        log.info("Socket is {}".format(sock))
+        serve(sock, respond)
 
 
 if __name__ == "__main__":
